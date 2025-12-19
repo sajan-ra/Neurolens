@@ -1,0 +1,8 @@
+{
+  "name": "NeuroLens Cognitive Wellness",
+  "description": "A sophisticated AI-powered diagnostic support tool that analyzes speech, motor behavior, and cognitive patterns to provide early risk indicators for neurodegenerative conditions.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
