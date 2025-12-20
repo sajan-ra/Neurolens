@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import OpenAI from "openai";
 import { AssessmentData, DiagnosticReport } from "../types";
 
 export const generateFinalReport = async (data: AssessmentData): Promise<DiagnosticReport & { citations?: any[], isDemo?: boolean }> => {
@@ -9,10 +9,8 @@ export const generateFinalReport = async (data: AssessmentData): Promise<Diagnos
   if (!API_KEY || API_KEY === 'undefined' || API_KEY === '') {
     console.warn("NeuroLens: No API Key found. Running in simulation mode.");
     
-    // Artificial delay to simulate heavy processing
     await new Promise(resolve => setTimeout(resolve, 4000));
     
-    // Updated object to satisfy the DiagnosticReport interface requirements
     return {
       overallRisk: 'Low',
       confidence: 0.92,
@@ -26,7 +24,7 @@ export const generateFinalReport = async (data: AssessmentData): Promise<Diagnos
         "Maintain current physical activity levels.",
         "Ensure consistent 7-9 hour sleep cycles."
       ],
-      medicalGrounding: "DEMO MODE: In a production environment, this analysis is grounded in real-time medical literature via Google Search. Currently displaying baseline metrics.",
+      medicalGrounding: "DEMO MODE: In a production environment, this analysis is grounded in real-time medical literature. Currently displaying baseline metrics.",
       isDemo: true,
       citations: [
         { web: { title: "Standard Cognitive Baselines", uri: "https://example.com/demo" } }
@@ -34,68 +32,67 @@ export const generateFinalReport = async (data: AssessmentData): Promise<Diagnos
     };
   }
 
-  // Use the recommended Gemini model for complex reasoning and grounding tasks
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
-  const modelName = "gemini-3-pro-preview";
+  // Configuration for NVIDIA Integrated API (DeepSeek-V3)
+  const openai = new OpenAI({
+    apiKey: API_KEY,
+    baseURL: 'https://integrate.api.nvidia.com/v1',
+    dangerouslyAllowBrowser: true 
+  });
 
   const prompt = `
     ACT AS A SENIOR NEUROLOGICAL DIAGNOSTIC AI SYSTEM.
     Analyze the following multimodal digital biomarker data for indicators of neurodegenerative risk (specifically targeting Alzheimer's and Parkinson's patterns).
 
     DATA PACKAGE:
-    - ACOUSTIC (Speech/Pause patterns): ${JSON.stringify(data.audioMetrics)}
-    - OCULOMOTOR (Eye tracking/Gaze stability): ${JSON.stringify(data.visualMetrics)}
-    - LINGUISTIC (Typing cadence/Accuracy): ${JSON.stringify(data.textMetrics)}
+    - ACOUSTIC: ${JSON.stringify(data.audioMetrics)}
+    - OCULOMOTOR: ${JSON.stringify(data.visualMetrics)}
+    - LINGUISTIC: ${JSON.stringify(data.textMetrics)}
     - BEHAVIORAL CONTEXT: ${JSON.stringify(data.behavioralData)}
     
     REQUIRED OUTPUT:
-    1. A probabilistic risk category (Low, Moderate, Elevated).
-    2. High-fidelity clinical reasoning.
-    3. Use Google Search to find and cite 2-3 specific clinical studies or medical journal articles linking these digital patterns to neurological conditions.
-    
-    Format the response as a strict JSON object.
+    Return a STRICT JSON object only. Do not provide any conversational preamble.
+    Structure:
+    {
+      "overallRisk": "Low" | "Moderate" | "Elevated",
+      "confidence": number,
+      "analysis": {
+        "speech": "text",
+        "visual": "text",
+        "cognitive": "text"
+      },
+      "recommendations": ["string"],
+      "medicalGrounding": "Deep clinical reasoning text"
+    }
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            overallRisk: { type: Type.STRING, enum: ['Low', 'Moderate', 'Elevated'] },
-            confidence: { type: Type.NUMBER },
-            analysis: {
-              type: Type.OBJECT,
-              properties: {
-                speech: { type: Type.STRING },
-                visual: { type: Type.STRING },
-                cognitive: { type: Type.STRING }
-              },
-              required: ["speech", "visual", "cognitive"]
-            },
-            recommendations: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            medicalGrounding: { type: Type.STRING }
-          },
-          required: ["overallRisk", "confidence", "analysis", "recommendations", "medicalGrounding"]
-        }
-      }
+    const completion = await openai.chat.completions.create({
+      model: "deepseek-ai/deepseek-v3",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1, // Near-zero temperature for strict structural compliance
+      top_p: 1,
+      max_tokens: 4096,
+      stream: true
     });
 
-    // Directly access the text property as per @google/genai guidelines
-    const result = JSON.parse(response.text || '{}');
-    // Extract search grounding citations if available
-    const citations = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    let fullText = "";
+    for await (const chunk of completion) {
+      fullText += chunk.choices[0]?.delta?.content || "";
+    }
+
+    // Attempt to extract JSON if the model included markdown wrappers
+    const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[0] : fullText;
     
-    return { ...result, citations, isDemo: false };
+    const result = JSON.parse(jsonStr);
+    
+    return { 
+      ...result, 
+      citations: [], // Manual citations placeholder
+      isDemo: false 
+    };
   } catch (error) {
-    console.error("AI Engine Error:", error);
+    console.error("Diagnostic Analysis Error:", error);
     throw error;
   }
 };
