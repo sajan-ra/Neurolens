@@ -4,7 +4,8 @@ import { DiagnosticReport } from '../types';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
 
 interface ReportDashboardProps {
-  report: DiagnosticReport & { medicalGrounding?: string, citations?: any[], rawData?: any };
+  // Integrated DiagnosticReport directly as it now contains the required fields
+  report: DiagnosticReport & { citations?: any[], rawData?: any };
 }
 
 export const ReportDashboard: React.FC<ReportDashboardProps> = ({ report }) => {

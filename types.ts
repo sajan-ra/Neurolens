@@ -52,4 +52,6 @@ export interface DiagnosticReport {
     cognitive: string;
   };
   recommendations: string[];
+  // Clinical reasoning and search-grounded text from Gemini
+  medicalGrounding: string;
 }

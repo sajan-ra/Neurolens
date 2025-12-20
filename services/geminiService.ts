@@ -2,10 +2,40 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AssessmentData, DiagnosticReport } from "../types";
 
-export const generateFinalReport = async (data: AssessmentData): Promise<DiagnosticReport & { citations?: any[] }> => {
-  // Create a new instance right before the call to ensure the latest API key is used
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
+export const generateFinalReport = async (data: AssessmentData): Promise<DiagnosticReport & { citations?: any[], isDemo?: boolean }> => {
+  const API_KEY = process.env.API_KEY;
+
+  // Fallback if API key is missing to prevent Vercel deployment crashes
+  if (!API_KEY || API_KEY === 'undefined' || API_KEY === '') {
+    console.warn("NeuroLens: No API Key found. Running in simulation mode.");
+    
+    // Artificial delay to simulate heavy processing
+    await new Promise(resolve => setTimeout(resolve, 4000));
+    
+    // Updated object to satisfy the DiagnosticReport interface requirements
+    return {
+      overallRisk: 'Low',
+      confidence: 0.92,
+      analysis: {
+        speech: "SIMULATED: Vocal patterns show standard frequency distribution. No micro-tremors detected in the 50Hz range.",
+        visual: "SIMULATED: Gaze tracking stable with standard saccadic latency of 210ms.",
+        cognitive: "SIMULATED: Linguistic variability suggests high executive function and working memory stability."
+      },
+      recommendations: [
+        "Continue routine cognitive monitoring.",
+        "Maintain current physical activity levels.",
+        "Ensure consistent 7-9 hour sleep cycles."
+      ],
+      medicalGrounding: "DEMO MODE: In a production environment, this analysis is grounded in real-time medical literature via Google Search. Currently displaying baseline metrics.",
+      isDemo: true,
+      citations: [
+        { web: { title: "Standard Cognitive Baselines", uri: "https://example.com/demo" } }
+      ]
+    };
+  }
+
+  // Use the recommended Gemini model for complex reasoning and grounding tasks
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
   const modelName = "gemini-3-pro-preview";
 
   const prompt = `
@@ -17,11 +47,6 @@ export const generateFinalReport = async (data: AssessmentData): Promise<Diagnos
     - OCULOMOTOR (Eye tracking/Gaze stability): ${JSON.stringify(data.visualMetrics)}
     - LINGUISTIC (Typing cadence/Accuracy): ${JSON.stringify(data.textMetrics)}
     - BEHAVIORAL CONTEXT: ${JSON.stringify(data.behavioralData)}
-
-    DIAGNOSTIC CRITERIA:
-    1. Evaluate "Pause-to-Speech" ratio for cognitive load indicators.
-    2. Analyze "Gaze Drift" variance for oculomotor circuit stability.
-    3. Assessment of "Inter-Keystroke Intervals" for motor tremor indicators.
     
     REQUIRED OUTPUT:
     1. A probabilistic risk category (Low, Moderate, Elevated).
@@ -56,22 +81,21 @@ export const generateFinalReport = async (data: AssessmentData): Promise<Diagnos
               type: Type.ARRAY,
               items: { type: Type.STRING }
             },
-            medicalGrounding: {
-              type: Type.STRING,
-              description: "Summary of research citations used."
-            }
+            medicalGrounding: { type: Type.STRING }
           },
           required: ["overallRisk", "confidence", "analysis", "recommendations", "medicalGrounding"]
         }
       }
     });
 
+    // Directly access the text property as per @google/genai guidelines
     const result = JSON.parse(response.text || '{}');
+    // Extract search grounding citations if available
     const citations = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     
-    return { ...result, citations };
+    return { ...result, citations, isDemo: false };
   } catch (error) {
-    console.error("Diagnostic engine error:", error);
+    console.error("AI Engine Error:", error);
     throw error;
   }
 };
