@@ -6,11 +6,10 @@ interface AudioPhaseProps {
 }
 
 const PHILOSOPHICAL_PROMPTS = [
-  "If the universe is entirely physical, can there be such a thing as free will, or is every choice pre-determined by the laws of physics?",
-  "Does language shape our thoughts, or does thought exist independently of the words we use to describe it?",
-  "If you were to replace every single cell in your body over the next seven years, would you still be the same person at the end of that journey?",
-  "What is the nature of consciousness? Is it a byproduct of biological complexity, or something more fundamental to the fabric of reality?",
-  "In a world where digital copies of a mind could exist, what would define the 'original' self?"
+  "What is something you would do today if you knew you could not fail, and why haven't you done it yet?",
+  "In your opinion, what is the difference between existing and truly living?",
+  "If you could have a conversation with your future self, what is the one thing you'd hope they still remember?",
+  "What is a small, everyday moment that always brings you peace, and what does that say about you?"
 ];
 
 export const AudioPhase: React.FC<AudioPhaseProps> = ({ onComplete }) => {
@@ -18,108 +17,126 @@ export const AudioPhase: React.FC<AudioPhaseProps> = ({ onComplete }) => {
   const [progress, setProgress] = useState(0);
   const [secondsRemaining, setSecondsRemaining] = useState(180);
   const [currentPrompt, setCurrentPrompt] = useState("");
+  const [micError, setMicError] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0);
+  
+  // Real Tracking States
+  const [realPauseCount, setRealPauseCount] = useState(0);
+  const isSilentRef = useRef(false);
+  const silenceStartRef = useRef<number | null>(null);
+
   const timerRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     setCurrentPrompt(PHILOSOPHICAL_PROMPTS[Math.floor(Math.random() * PHILOSOPHICAL_PROMPTS.length)]);
+    return () => cleanupAudio();
   }, []);
 
-  const startAnalysis = () => {
-    setIsRecording(true);
-    setProgress(0);
-    setSecondsRemaining(180);
-    
-    // 3 minutes = 180,000ms. 
-    // We update 100 times to fill the bar. 180,000 / 100 = 1,800ms per 1% increment.
-    timerRef.current = window.setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 100) {
-          stopAnalysis();
-          return 100;
+  const cleanupAudio = () => {
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') audioContextRef.current.close();
+  };
+
+  const startAnalysis = async () => {
+    setMicError(null);
+    setRealPauseCount(0);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const analyser = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      analyser.fftSize = 256;
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      const updateLevel = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+        const average = sum / bufferLength;
+        setAudioLevel(average); 
+
+        // DETECT REAL PAUSES
+        const SILENCE_THRESHOLD = 15; // Low volume threshold
+        if (average < SILENCE_THRESHOLD) {
+          if (!isSilentRef.current) {
+            isSilentRef.current = true;
+            silenceStartRef.current = Date.now();
+          } else if (silenceStartRef.current && (Date.now() - silenceStartRef.current > 1500)) {
+            // If silent for more than 1.5 seconds, count as a significant pause
+            setRealPauseCount(prev => prev + 1);
+            silenceStartRef.current = Date.now() + 1000000; // Prevent double counting same silence
+          }
+        } else {
+          isSilentRef.current = false;
+          silenceStartRef.current = null;
         }
-        return prev + 1;
-      });
-      setSecondsRemaining(prev => Math.max(0, prev - 1.8)); // Approximate countdown
-    }, 1800); 
+
+        animationFrameRef.current = requestAnimationFrame(updateLevel);
+      };
+      
+      updateLevel();
+      setIsRecording(true);
+      timerRef.current = window.setInterval(() => {
+        setProgress(prev => (prev >= 100 ? 100 : prev + 1));
+        setSecondsRemaining(prev => Math.max(0, prev - 1.8));
+      }, 1800);
+
+    } catch (err) {
+      setMicError("Microphone access denied.");
+    }
   };
 
   const stopAnalysis = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    cleanupAudio();
     setIsRecording(false);
-    // Mock metrics based on the deep linguistic analysis requested
     onComplete({
-      transcript: `Extended philosophical discourse regarding: ${currentPrompt}`,
-      pauseCount: 12,
-      fillerWords: ["um", "uh", "actually", "like"],
-      speechRate: 135,
-      lexicalDiversity: 0.82,
-      analysisDuration: 180
+      transcript: `Response to: ${currentPrompt}`,
+      pauseCount: realPauseCount, // ACTUAL CAPTURED DATA
+      audioClarity: audioLevel > 10 ? 0.9 : 0.2,
+      analysisDuration: 180 - secondsRemaining
     });
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
     <div className="space-y-6">
-      <div className="bg-teal-900/10 p-5 rounded-lg border border-teal-500/20">
-        <h3 className="text-teal-400 font-bold mb-3 flex items-center gap-2">
-          <i className="fas fa-brain text-xs"></i>
-          Deep Linguistic & Cognitive Prompt
+      <div className="bg-teal-900/10 p-6 rounded-xl border border-teal-500/20">
+        <h3 className="text-teal-400 font-bold mb-4 flex items-center gap-2 text-sm uppercase tracking-widest">
+          <i className="fas fa-comment-dots"></i> Reflective Thought Task
         </h3>
-        <p className="text-lg font-medium text-white italic leading-relaxed">
-          "{currentPrompt}"
-        </p>
-        <p className="text-xs text-gray-500 mt-4 uppercase tracking-tighter">
-          Goal: Speak continuously for 3 minutes to allow the AI to map complex syntax and temporal speech markers.
-        </p>
+        <p className="text-xl font-semibold text-white italic">"{currentPrompt}"</p>
       </div>
 
-      <div className="flex flex-col items-center justify-center p-10 bg-black/40 rounded-2xl border border-white/5 relative overflow-hidden">
-        {isRecording && <div className="scanner-line opacity-50"></div>}
-        
-        <div className="absolute top-4 right-6 font-mono text-xl text-teal-400">
-          {formatTime(secondsRemaining)}
+      <div className="flex flex-col items-center justify-center p-12 bg-black/40 rounded-2xl border border-white/5 relative overflow-hidden">
+        {isRecording && <div className="scanner-line opacity-30"></div>}
+        <div className="absolute top-6 right-8 font-mono text-2xl text-teal-400 font-bold">
+          {Math.floor(secondsRemaining / 60)}:{(Math.floor(secondsRemaining % 60)).toString().padStart(2, '0')}
         </div>
 
-        <div className={`w-28 h-28 rounded-full flex items-center justify-center border-4 transition-all duration-500 ${isRecording ? 'border-red-500 shadow-[0_0_30px_rgba(239,68,68,0.3)] scale-110' : 'border-teal-500 shadow-[0_0_20px_rgba(20,184,166,0.2)]'}`}>
-          <i className={`fas ${isRecording ? 'fa-waveform' : 'fa-microphone-lines'} text-4xl ${isRecording ? 'text-red-500 animate-pulse' : 'text-teal-400'}`}></i>
+        <div className={`relative w-32 h-32 rounded-full flex items-center justify-center border-4 ${isRecording ? 'border-red-500' : 'border-teal-500'}`}>
+          <i className={`fas ${isRecording ? 'fa-volume-high' : 'fa-microphone'} text-4xl ${isRecording ? 'text-red-500' : 'text-teal-400'}`}></i>
         </div>
 
-        <div className="mt-10 w-full bg-white/5 h-3 rounded-full overflow-hidden border border-white/10">
-          <div 
-            className="bg-gradient-to-r from-teal-600 to-teal-400 h-full transition-all duration-[1800ms] ease-linear" 
-            style={{ width: `${progress}%` }}
-          ></div>
-        </div>
-
-        <div className="mt-4 text-[10px] font-mono text-gray-500 uppercase tracking-widest">
-          {isRecording ? 'Analyzing Temporal Cadence...' : 'Ready for Acoustic Fingerprinting'}
-        </div>
-
-        <button
-          onClick={isRecording ? stopAnalysis : startAnalysis}
-          className={`mt-8 px-12 py-4 rounded-xl font-black transition-all transform hover:scale-105 ${isRecording ? 'bg-red-600 text-white' : 'bg-teal-500 text-black'}`}
-        >
-          {isRecording ? 'FINISH EARLY' : 'BEGIN 3-MINUTE ASSESSMENT'}
-        </button>
-      </div>
-
-      <div className="grid grid-cols-3 gap-4">
-        <div className="p-4 glass-panel rounded-xl text-center border border-white/5">
-          <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1 font-bold">Latency</div>
-          <div className="font-mono text-teal-400 text-sm">12ms</div>
-        </div>
-        <div className="p-4 glass-panel rounded-xl text-center border border-white/5">
-          <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1 font-bold">Bitrate</div>
-          <div className="font-mono text-teal-400 text-sm">128kbps</div>
-        </div>
-        <div className="p-4 glass-panel rounded-xl text-center border border-white/5">
-          <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1 font-bold">Symmetry</div>
-          <div className="font-mono text-teal-400 text-sm">Balanced</div>
+        <div className="mt-10 flex flex-col items-center">
+          <div className="text-[10px] text-gray-500 mb-2 uppercase font-mono">Detected Pauses: <span className="text-teal-400 font-bold">{realPauseCount}</span></div>
+          <button
+            onClick={isRecording ? stopAnalysis : startAnalysis}
+            className={`px-14 py-4 rounded-2xl font-black text-lg transition-all ${isRecording ? 'bg-red-600 text-white' : 'bg-teal-500 text-black'}`}
+          >
+            {isRecording ? 'I HAVE FINISHED SPEAKING' : 'START VOCAL ASSESSMENT'}
+          </button>
         </div>
       </div>
     </div>

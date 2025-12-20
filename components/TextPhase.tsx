@@ -7,7 +7,7 @@ interface TextPhaseProps {
 
 export const TextPhase: React.FC<TextPhaseProps> = ({ onComplete }) => {
   const [input, setInput] = useState('');
-  const [metrics, setMetrics] = useState({ backspaces: 0, startTime: 0, charCount: 0 });
+  const [metrics, setMetrics] = useState({ backspaces: 0, startTime: 0 });
   const [isStarted, setIsStarted] = useState(false);
   const targetText = "The quick brown fox jumps over the lazy dog. A clear mind allows for focus and determination in the face of complex challenges.";
 
@@ -22,49 +22,47 @@ export const TextPhase: React.FC<TextPhaseProps> = ({ onComplete }) => {
   };
 
   const handleSubmit = () => {
-    const duration = (Date.now() - metrics.startTime) / 1000;
-    const wpm = (input.length / 5) / (duration / 60);
+    const durationMinutes = (Date.now() - metrics.startTime) / 60000;
+    const wpm = (input.length / 5) / durationMinutes;
+    
+    // Calculate real errors
+    const inputWords = input.trim().split(/\s+/);
+    const targetWords = targetText.trim().split(/\s+/);
+    let errors = 0;
+    inputWords.forEach((word, i) => {
+      if (word !== targetWords[i]) errors++;
+    });
+
     onComplete({
       content: input,
       backspaces: metrics.backspaces,
       typingSpeed: Math.round(wpm),
-      errors: 2,
-      complexity: 0.85
+      errors: errors,
+      accuracy: Math.max(0, 100 - (errors * 5))
     });
   };
 
   return (
     <div className="space-y-6">
-      <div className="bg-teal-900/10 p-4 rounded-lg border border-teal-500/20">
-        <h3 className="text-teal-400 font-semibold mb-2">Instructions</h3>
-        <p className="text-sm">Type the paragraph displayed below. We are monitoring your keystroke cadence, pause durations between words, and correction frequency.</p>
-      </div>
-
       <div className="p-4 bg-white/5 border border-white/10 rounded-lg italic text-gray-400 select-none">
         "{targetText}"
       </div>
-
       <textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        className="w-full h-32 bg-black border border-teal-500/40 rounded-xl p-4 text-white focus:ring-2 focus:ring-teal-500/40 outline-none font-mono"
-        placeholder="Start typing here..."
+        className="w-full h-32 bg-black border border-teal-500/40 rounded-xl p-4 text-white font-mono"
+        placeholder="Start typing the text above..."
       />
-
       <div className="flex items-center justify-between">
-        <div className="flex gap-4">
-          <div className="text-xs font-mono text-gray-500">
-            Backspaces: <span className="text-teal-400">{metrics.backspaces}</span>
-          </div>
-          <div className="text-xs font-mono text-gray-500">
-            Progress: <span className="text-teal-400">{Math.round((input.length / targetText.length) * 100)}%</span>
-          </div>
+        <div className="flex gap-4 text-xs font-mono text-gray-500">
+          <div>Backspaces: <span className="text-teal-400">{metrics.backspaces}</span></div>
+          <div>Chars: <span className="text-teal-400">{input.length}</span></div>
         </div>
         <button 
-          disabled={input.length < 20}
+          disabled={input.length < 10}
           onClick={handleSubmit}
-          className="bg-teal-600 disabled:opacity-50 text-white px-6 py-2 rounded-lg hover:bg-teal-500 transition-colors"
+          className="bg-teal-600 text-white px-8 py-2 rounded-lg hover:bg-teal-500"
         >
           Submit Entry
         </button>

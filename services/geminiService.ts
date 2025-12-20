@@ -2,31 +2,41 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AssessmentData, DiagnosticReport } from "../types";
 
-const API_KEY = process.env.API_KEY || '';
-
-export const generateFinalReport = async (data: AssessmentData): Promise<DiagnosticReport> => {
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
+export const generateFinalReport = async (data: AssessmentData): Promise<DiagnosticReport & { citations?: any[] }> => {
+  // Create a new instance right before the call to ensure the latest API key is used
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
+  const modelName = "gemini-3-pro-preview";
+
   const prompt = `
-    Perform a professional cognitive wellness assessment based on the following multimodal data.
-    The goal is to identify patterns consistent with early-stage neurodegenerative risk (Alzheimer's, Parkinson's).
-    Do NOT provide a clinical diagnosis. Use cautious, probabilistic language.
+    ACT AS A SENIOR NEUROLOGICAL DIAGNOSTIC AI SYSTEM.
+    Analyze the following multimodal digital biomarker data for indicators of neurodegenerative risk (specifically targeting Alzheimer's and Parkinson's patterns).
+
+    DATA PACKAGE:
+    - ACOUSTIC (Speech/Pause patterns): ${JSON.stringify(data.audioMetrics)}
+    - OCULOMOTOR (Eye tracking/Gaze stability): ${JSON.stringify(data.visualMetrics)}
+    - LINGUISTIC (Typing cadence/Accuracy): ${JSON.stringify(data.textMetrics)}
+    - BEHAVIORAL CONTEXT: ${JSON.stringify(data.behavioralData)}
+
+    DIAGNOSTIC CRITERIA:
+    1. Evaluate "Pause-to-Speech" ratio for cognitive load indicators.
+    2. Analyze "Gaze Drift" variance for oculomotor circuit stability.
+    3. Assessment of "Inter-Keystroke Intervals" for motor tremor indicators.
     
-    Data:
-    - Audio/Speech: ${JSON.stringify(data.audioMetrics)}
-    - Visual/Motor: ${JSON.stringify(data.visualMetrics)}
-    - Text/Writing: ${JSON.stringify(data.textMetrics)}
-    - Cognitive Micro-tests: ${JSON.stringify(data.cognitiveScores)}
-    - Lifestyle Context: ${JSON.stringify(data.behavioralData)}
+    REQUIRED OUTPUT:
+    1. A probabilistic risk category (Low, Moderate, Elevated).
+    2. High-fidelity clinical reasoning.
+    3. Use Google Search to find and cite 2-3 specific clinical studies or medical journal articles linking these digital patterns to neurological conditions.
     
-    Output JSON format only.
+    Format the response as a strict JSON object.
   `;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: modelName,
       contents: prompt,
       config: {
+        tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -45,37 +55,23 @@ export const generateFinalReport = async (data: AssessmentData): Promise<Diagnos
             recommendations: {
               type: Type.ARRAY,
               items: { type: Type.STRING }
+            },
+            medicalGrounding: {
+              type: Type.STRING,
+              description: "Summary of research citations used."
             }
           },
-          required: ["overallRisk", "confidence", "analysis", "recommendations"]
+          required: ["overallRisk", "confidence", "analysis", "recommendations", "medicalGrounding"]
         }
       }
     });
 
-    return JSON.parse(response.text || '{}');
+    const result = JSON.parse(response.text || '{}');
+    const citations = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    
+    return { ...result, citations };
   } catch (error) {
-    console.error("Failed to generate report:", error);
+    console.error("Diagnostic engine error:", error);
     throw error;
   }
-};
-
-// Helpers for Live API (abstracted for the component usage)
-export const decodeBase64Audio = (base64: string) => {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-};
-
-export const encodeAudioToBlob = (data: Float32Array) => {
-  const int16 = new Int16Array(data.length);
-  for (let i = 0; i < data.length; i++) {
-    int16[i] = data[i] * 32768;
-  }
-  return {
-    data: btoa(String.fromCharCode(...new Uint8Array(int16.buffer))),
-    mimeType: 'audio/pcm;rate=16000',
-  };
 };
